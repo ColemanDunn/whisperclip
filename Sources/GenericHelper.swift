@@ -490,7 +490,7 @@ enum GenericHelper {
             return false
         }
         
-        guard let role = getAXAttribute(focusedElement, kAXRoleAttribute) as? String else {
+        guard let role = getAXAttribute(focusedElement, kAXRoleAttribute as CFString) as? String else {
             Logger.log("Focused UI element has no role", log: Logger.general, type: .error)
             return false
         }
@@ -508,7 +508,7 @@ enum GenericHelper {
             return true
         }
         
-        if let value = getAXAttribute(focusedElement, kAXValueAttribute) {
+        if let value = getAXAttribute(focusedElement, kAXValueAttribute as CFString) {
             if let valueString = value as? String, !valueString.isEmpty {
                 return true
             }
@@ -521,10 +521,14 @@ enum GenericHelper {
         let systemWide = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused)
-        guard status == .success, let focusedElement = focused else {
+        guard status == .success,
+              let focusedElement = focused else {
             return nil
         }
-        return focusedElement as? AXUIElement
+        guard CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (focusedElement as! AXUIElement)
     }
     
     private static func getAXAttribute(_ element: AXUIElement, _ attribute: CFString) -> AnyObject? {

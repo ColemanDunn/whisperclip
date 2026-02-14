@@ -327,8 +327,8 @@ struct OnboardingView: View {
         OnboardingStep(
             title: "Accessibility Permission",
             description: """
-            Required for:
-            • Keyboard shortcuts
+            Optional for:
+            • Better focused-input detection
 
             Click "Request Access" to prompt for accessibility permission.
             """,
@@ -556,7 +556,7 @@ struct OnboardingView: View {
                                 }
                             }
                             Button(currentStep.buttonText) {
-                                stepProgress = 0.01
+                                stepProgress = currentStep.progressBar ? 0.01 : 0.0
                                 action(progressCallback)
                                 
                                 // Force an immediate refresh after requesting permission
@@ -566,6 +566,9 @@ struct OnboardingView: View {
                                     // Set stepProgress to completed if permission was immediately granted
                                     if let skipCondition = currentStep.skipCondition, skipCondition() {
                                         stepProgress = 1.0
+                                    } else if !currentStep.progressBar {
+                                        // Keep navigation available for permission and utility steps.
+                                        stepProgress = 0.0
                                     }
                                 }
                             }

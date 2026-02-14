@@ -3,11 +3,13 @@ import ApplicationServices
 import AVFoundation
 import AppKit
 import Combine
+import Quartz
 
 enum SecurityPermission {
     case accessibility
     case microphone
     case appleEvents
+    case inputMonitoring
 }
 
 struct PermissionStatus {
@@ -21,6 +23,7 @@ class SecurityChecker: ObservableObject {
     @Published var microphonePermissionGranted: Bool = false
     @Published var accessibilityPermissionGranted: Bool = false
     @Published var appleEventsPermissionGranted: Bool = false
+    @Published var inputMonitoringPermissionGranted: Bool = false
     
     private init() {
         updateAllPermissions()
@@ -31,6 +34,7 @@ class SecurityChecker: ObservableObject {
         microphonePermissionGranted = checkMicrophonePermission().isGranted
         accessibilityPermissionGranted = checkAccessibilityPermission().isGranted
         appleEventsPermissionGranted = checkAppleEventsPermission().isGranted
+        inputMonitoringPermissionGranted = checkInputMonitoringPermission().isGranted
     }
     
     func checkAllPermissions() -> [SecurityPermission: PermissionStatus] {
@@ -39,7 +43,16 @@ class SecurityChecker: ObservableObject {
         statuses[.accessibility] = checkAccessibilityPermission()
         statuses[.microphone] = checkMicrophonePermission()
         statuses[.appleEvents] = checkAppleEventsPermission()
+        statuses[.inputMonitoring] = checkInputMonitoringPermission()
         
+        return statuses
+    }
+    
+    private func checkRequiredPermissions() -> [SecurityPermission: PermissionStatus] {
+        // Global hotkeys are registered via Carbon and do not require Accessibility/Input Monitoring.
+        var statuses: [SecurityPermission: PermissionStatus] = [:]
+        statuses[.microphone] = checkMicrophonePermission()
+        statuses[.appleEvents] = checkAppleEventsPermission()
         return statuses
     }
     
@@ -120,13 +133,34 @@ class SecurityChecker: ObservableObject {
         )
     }
 
+    func checkInputMonitoringPermission() -> PermissionStatus {
+        if canCreateInputMonitoringTap() {
+            return PermissionStatus(
+                isGranted: true,
+                message: "Input monitoring permission granted"
+            )
+        }
+        return PermissionStatus(
+            isGranted: false,
+            message: "Input monitoring permission required for global hotkeys"
+        )
+    }
+
+    func requestInputMonitoringPermission() {
+        Logger.log("Requesting Input Monitoring permission", log: Logger.general)
+        openSecurityPrivacyPanel("ListenEvent")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            self.updateAllPermissions()
+        }
+    }
+
     func areAllPermissionsGranted() -> Bool {
-        let statuses = checkAllPermissions()
+        let statuses = checkRequiredPermissions()
         return statuses.values.allSatisfy { $0.isGranted }
     }
     
     func getMissingPermissions() -> [String] {
-        let statuses = checkAllPermissions()
+        let statuses = checkRequiredPermissions()
         return statuses
             .filter { !$0.value.isGranted }
             .map { $0.value.message }
@@ -202,5 +236,38 @@ class SecurityChecker: ObservableObject {
         DispatchQueue.main.async {
             self.updateAllPermissions()
         }
+    }
+
+    private func openSecurityPrivacyPanel(_ section: String) {
+        let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_\(section)"
+        guard let url = URL(string: urlString) else {
+            Logger.log("Could not open privacy settings for section: \(section)", log: Logger.general, type: .error)
+            return
+        }
+        
+        let opened = NSWorkspace.shared.open(url)
+        Logger.log("Opened system privacy panel for \(section): \(opened)", log: Logger.general)
+    }
+
+    private func canCreateInputMonitoringTap() -> Bool {
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(mask),
+            callback: { _, _, event, _ in
+                Unmanaged.passUnretained(event)
+            },
+            userInfo: nil
+        ) else {
+            Logger.log("Input monitoring permission check tap creation failed", log: Logger.general, type: .error)
+            return false
+        }
+
+        // If creation succeeds, the permission check has passed. Disable and tear down the temporary tap.
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFMachPortInvalidate(tap)
+        return true
     }
 }

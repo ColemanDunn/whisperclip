@@ -1,17 +1,57 @@
 import Cocoa
-import Quartz
+import Carbon
 
 class HotkeyManager: ObservableObject {
-    private var eventTap: CFMachPort?
+    private var hotKeyRef: EventHotKeyRef?
     var action: () -> Void = {}
     var keyUpAction: () -> Void = {}
-    private var runLoopSource: CFRunLoopSource?
     var currentModifier: NSEvent.ModifierFlags?
     var currentKeyCode: UInt16?
     static let shared = HotkeyManager()
     static let meetingShared = HotkeyManager()
+    private let managerID: UInt32
+    
+    private static let hotKeySignature = fourCharCode("WCPK")
+    private static var nextManagerID: UInt32 = 1
+    private static var managersByID: [UInt32: WeakManagerBox] = [:]
+    private static var hotKeyEventHandler: EventHandlerRef?
+    private static let hotKeyHandlerUPP: EventHandlerUPP = { _, eventRef, _ in
+        guard let eventRef else { return noErr }
+        
+        var hotKeyID = EventHotKeyID()
+        let hotKeyIDStatus = GetEventParameter(
+            eventRef,
+            EventParamName(kEventParamDirectObject),
+            EventParamType(typeEventHotKeyID),
+            nil,
+            MemoryLayout<EventHotKeyID>.size,
+            nil,
+            &hotKeyID
+        )
+        
+        guard hotKeyIDStatus == noErr,
+              hotKeyID.signature == HotkeyManager.hotKeySignature,
+              let manager = HotkeyManager.managersByID[hotKeyID.id]?.manager else {
+            return noErr
+        }
+        
+        let eventKind = GetEventKind(eventRef)
+        DispatchQueue.main.async {
+            if eventKind == UInt32(kEventHotKeyPressed) {
+                manager.action()
+            } else if eventKind == UInt32(kEventHotKeyReleased) {
+                manager.keyUpAction()
+            }
+        }
+        
+        return noErr
+    }
 
     private init() {
+        managerID = Self.nextManagerID
+        Self.nextManagerID += 1
+        Self.managersByID[managerID] = WeakManagerBox(manager: self)
+        Self.installHotKeyEventHandlerIfNeeded()
     }
 
     func setAction(action: @escaping () -> Void) {
@@ -36,40 +76,35 @@ class HotkeyManager: ObservableObject {
         // Store current settings
         currentModifier = modifier
         currentKeyCode = keyCode
-
-        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(mask),
-            callback: hotkeyCallback,
-            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        
+        let carbonModifierFlags = Self.carbonModifierFlags(from: modifier)
+        let hotKeyID = EventHotKeyID(signature: Self.hotKeySignature, id: managerID)
+        let registerStatus = RegisterEventHotKey(
+            UInt32(keyCode),
+            carbonModifierFlags,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
         )
 
-        if let tap = eventTap {
-            runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-            Logger.log("Event tap installed", log: Logger.hotkey)
+        if registerStatus == noErr, hotKeyRef != nil {
+            Logger.log("Global hotkey registered", log: Logger.hotkey)
         } else {
-            Logger.log("Failed to install event tap", log: Logger.hotkey, type: .error)
+            hotKeyRef = nil
+            Logger.log("Failed to register global hotkey, status=\(registerStatus)", log: Logger.hotkey, type: .error)
         }
     }
 
     func removeSystemHotkey() {
         Logger.log("Removing system hotkey", log: Logger.hotkey)
-
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let src = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
-            }
-            eventTap = nil
-            runLoopSource = nil
+        
+        if let hotKeyRef {
+            let status = UnregisterEventHotKey(hotKeyRef)
+            Logger.log("Global hotkey unregistered (status=\(status))", log: Logger.hotkey)
+            self.hotKeyRef = nil
             currentModifier = nil
             currentKeyCode = nil
-            Logger.log("Event tap removed", log: Logger.hotkey)
         }
     }
 
@@ -88,31 +123,51 @@ class HotkeyManager: ObservableObject {
 
     deinit {
         removeSystemHotkey()
+        Self.managersByID.removeValue(forKey: managerID)
+    }
+
+    private static func installHotKeyEventHandlerIfNeeded() {
+        guard hotKeyEventHandler == nil else { return }
+        
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
+        
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            hotKeyHandlerUPP,
+            eventTypes.count,
+            &eventTypes,
+            nil,
+            &hotKeyEventHandler
+        )
+        
+        if installStatus == noErr {
+            Logger.log("Hotkey event handler installed", log: Logger.hotkey)
+        } else {
+            Logger.log("Failed to install hotkey event handler, status=\(installStatus)", log: Logger.hotkey, type: .error)
+        }
+    }
+    
+    private static func carbonModifierFlags(from modifier: NSEvent.ModifierFlags) -> UInt32 {
+        var flags: UInt32 = 0
+        if modifier.contains(.command) { flags |= UInt32(cmdKey) }
+        if modifier.contains(.option) { flags |= UInt32(optionKey) }
+        if modifier.contains(.control) { flags |= UInt32(controlKey) }
+        if modifier.contains(.shift) { flags |= UInt32(shiftKey) }
+        return flags
+    }
+    
+    private static func fourCharCode(_ text: String) -> OSType {
+        text.utf8.reduce(0) { ($0 << 8) + OSType($1) }
     }
 }
 
-// Static callback function
-private func hotkeyCallback(proxy: CGEventTapProxy, type: CGEventType, cgEvent: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
-    guard type == .keyDown || type == .keyUp else { return Unmanaged.passUnretained(cgEvent) }
-    guard let refcon = refcon else { return Unmanaged.passUnretained(cgEvent) }
-
-    let manager = Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
-    let event = NSEvent(cgEvent: cgEvent)
-
-    if let modifier = manager.currentModifier,
-        let keyCode = manager.currentKeyCode,
-        event?.modifierFlags.contains(modifier) == true,
-        event?.keyCode == keyCode {
-            // Run action on main thread
-            DispatchQueue.main.async {
-                if type == .keyDown {
-                    manager.action()
-                } else if type == .keyUp {
-                    manager.keyUpAction()
-                }
-            }
-        return nil  // Swallow the event
+private final class WeakManagerBox {
+    weak var manager: HotkeyManager?
+    
+    init(manager: HotkeyManager) {
+        self.manager = manager
     }
-
-    return Unmanaged.passUnretained(cgEvent)
 }

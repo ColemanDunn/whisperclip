@@ -11,6 +11,7 @@ echo "Resetting specific permissions..."
 sudo tccutil reset Microphone com.whisperclip
 sudo tccutil reset Accessibility com.whisperclip
 sudo tccutil reset AppleEvents com.whisperclip
+sudo tccutil reset ListenEvent com.whisperclip
 
 echo "Permissions have been reset. Please restart the app."
 echo "Note: You may need to restart your computer for changes to take full effect."

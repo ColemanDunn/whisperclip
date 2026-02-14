@@ -72,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Activate \(WhisperClipAppName)", action: #selector(activateApp), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show \(WhisperClipAppName)", action: #selector(showApp), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Setup Guide", action: #selector(showSetupGuide), keyEquivalent: ""))
@@ -84,6 +85,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func showApp() {
+        activateApp()
+    }
+    
+    @objc private func activateApp() {
         NSApp.setActivationPolicy(.regular)
         if mainWindow == nil {
             setupMainWindowDelegate()

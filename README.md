@@ -74,7 +74,7 @@
 - **macOS 14.0** or later
 - **20GB** free disk space (for AI models)
 - **Microphone access** permission
-- **Accessibility permissions** (for global hotkeys)
+- **Accessibility permissions** (optional; improves focused-input detection)
 - **Apple Events permissions** (for clipboard operations)
 
 ## 🚀 Installation

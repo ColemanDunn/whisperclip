@@ -38,6 +38,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
+    @Environment(\.openSettings) private var openSettings
     @State private var selectedItem: SidebarItem = .microphone
     @State private var hoveredItem: SidebarItem? = nil
     @ObservedObject private var settings = SettingsStore.shared
@@ -124,6 +125,21 @@ struct ContentView: View {
                         .background(Color.white.opacity(0.1))
                         .padding(.horizontal, 16)
                     
+                    Button(action: {
+                        openSettings()
+                    }) {
+                        HStack {
+                            Image(systemName: "gearshape")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                            Text("Settings")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 4)
+                    
                     HStack {
                         Image(systemName: "keyboard")
                             .font(.caption)
@@ -198,6 +214,7 @@ struct SidebarButton: View {
                     .fill(isSelected ? Color.white.opacity(0.1) : (isHovered ? Color.white.opacity(0.05) : Color.clear))
             )
         }
+        .frame(minHeight: 52)
         .buttonStyle(.plain)
     }
 }
