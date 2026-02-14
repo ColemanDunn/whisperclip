@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import AppKit
+import ApplicationServices
 
 enum GenericHelper {
 
@@ -451,6 +452,13 @@ enum GenericHelper {
             return false
         }
 
+        guard shouldAutoPasteToFocusedInput() else {
+            if GenericHelper.logSensitiveData() {
+                Logger.log("Auto paste skipped: no focused input detected", log: Logger.general)
+            }
+            return false
+        }
+
         // ⌘V in whichever app is active
         let script = #"""
         tell application "System Events"
@@ -469,6 +477,63 @@ enum GenericHelper {
             }
             return true
         }
+    }
+
+    private static func shouldAutoPasteToFocusedInput() -> Bool {
+        guard SecurityChecker.shared.checkAccessibilityPermission().isGranted else {
+            Logger.log("Accessibility not trusted; skipping focused-input check and falling back to default paste behavior", log: Logger.general)
+            return true
+        }
+        
+        guard let focusedElement = getFocusedUIElement() else {
+            Logger.log("No focused UI element detected", log: Logger.general, type: .error)
+            return false
+        }
+        
+        guard let role = getAXAttribute(focusedElement, kAXRoleAttribute) as? String else {
+            Logger.log("Focused UI element has no role", log: Logger.general, type: .error)
+            return false
+        }
+
+        let editableRoles: Set<String> = [
+            "AXTextField",
+            "AXTextArea",
+            "AXComboBox",
+            "AXSearchField",
+            "AXSecureTextField",
+            "AXTextView"
+        ]
+        
+        if editableRoles.contains(role) {
+            return true
+        }
+        
+        if let value = getAXAttribute(focusedElement, kAXValueAttribute) {
+            if let valueString = value as? String, !valueString.isEmpty {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private static func getFocusedUIElement() -> AXUIElement? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused)
+        guard status == .success, let focusedElement = focused else {
+            return nil
+        }
+        return focusedElement as? AXUIElement
+    }
+    
+    private static func getAXAttribute(_ element: AXUIElement, _ attribute: CFString) -> AnyObject? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard status == .success, let value = value else {
+            return nil
+        }
+        return value as AnyObject
     }
 
     static func sendEnter() -> Bool {

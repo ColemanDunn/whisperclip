@@ -19,6 +19,8 @@ struct DefaultSettings {
     static let language = "auto"
     static let sttEngine = STTEngine.parakeet
     static let autoEnter = false
+    static let recordingSoundsEnabled = true
+    static let deleteRecordingFileAfterTranscription = true
     static let startMinimized = false
     static let displayRecordingOverlay = false
     static let overlayPosition = "topRight"
@@ -53,6 +55,8 @@ class SettingsStore: ObservableObject {
         case language = "language"
         case sttEngine = "sttEngine"
         case autoEnter = "autoEnter"
+        case recordingSoundsEnabled = "recordingSoundsEnabled"
+        case deleteRecordingFileAfterTranscription = "deleteRecordingFileAfterTranscription"
         case startMinimized = "startMinimized"
         case displayRecordingOverlay = "displayRecordingOverlay"
         case overlayPosition = "overlayPosition"
@@ -98,6 +102,18 @@ class SettingsStore: ObservableObject {
     @Published var autoEnter: Bool = DefaultSettings.autoEnter {
         didSet {
             defaults.set(autoEnter, forKey: Keys.autoEnter.rawValue)
+        }
+    }
+
+    @Published var recordingSoundsEnabled: Bool = DefaultSettings.recordingSoundsEnabled {
+        didSet {
+            defaults.set(recordingSoundsEnabled, forKey: Keys.recordingSoundsEnabled.rawValue)
+        }
+    }
+
+    @Published var deleteRecordingFileAfterTranscription: Bool = DefaultSettings.deleteRecordingFileAfterTranscription {
+        didSet {
+            defaults.set(deleteRecordingFileAfterTranscription, forKey: Keys.deleteRecordingFileAfterTranscription.rawValue)
         }
     }
     
@@ -248,6 +264,8 @@ class SettingsStore: ObservableObject {
             self.sttEngine = DefaultSettings.sttEngine
         }
         self.autoEnter = defaults.object(forKey: Keys.autoEnter.rawValue) == nil ? DefaultSettings.autoEnter : defaults.bool(forKey: Keys.autoEnter.rawValue)
+        self.recordingSoundsEnabled = defaults.object(forKey: Keys.recordingSoundsEnabled.rawValue) == nil ? DefaultSettings.recordingSoundsEnabled : defaults.bool(forKey: Keys.recordingSoundsEnabled.rawValue)
+        self.deleteRecordingFileAfterTranscription = defaults.object(forKey: Keys.deleteRecordingFileAfterTranscription.rawValue) == nil ? DefaultSettings.deleteRecordingFileAfterTranscription : defaults.bool(forKey: Keys.deleteRecordingFileAfterTranscription.rawValue)
         self.startMinimized = defaults.object(forKey: Keys.startMinimized.rawValue) == nil ? DefaultSettings.startMinimized : defaults.bool(forKey: Keys.startMinimized.rawValue)
         self.displayRecordingOverlay = defaults.object(forKey: Keys.displayRecordingOverlay.rawValue) == nil ? DefaultSettings.displayRecordingOverlay : defaults.bool(forKey: Keys.displayRecordingOverlay.rawValue)
         self.overlayPosition = defaults.string(forKey: Keys.overlayPosition.rawValue) ?? DefaultSettings.overlayPosition
@@ -337,6 +355,8 @@ class SettingsStore: ObservableObject {
         language = DefaultSettings.language
         sttEngine = DefaultSettings.sttEngine
         autoEnter = DefaultSettings.autoEnter
+        recordingSoundsEnabled = DefaultSettings.recordingSoundsEnabled
+        deleteRecordingFileAfterTranscription = DefaultSettings.deleteRecordingFileAfterTranscription
         startMinimized = DefaultSettings.startMinimized
         displayRecordingOverlay = DefaultSettings.displayRecordingOverlay
         overlayPosition = DefaultSettings.overlayPosition

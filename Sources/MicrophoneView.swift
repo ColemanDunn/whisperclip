@@ -416,7 +416,11 @@ struct MicrophoneView: View {
         }
 
         self.resultText = text
-        self.statusMessage = "✓ Copied to clipboard \(pasted ? "✓ Auto pasted" : "")\(pasted && settings.autoEnter ? " ✓ Auto enter" : "")"
+        if pasted {
+            self.statusMessage = "✓ Copied to clipboard ✓ Auto pasted\(settings.autoEnter ? " ✓ Auto enter" : "")"
+        } else {
+            self.statusMessage = "✓ Copied to clipboard (no active text input detected)"
+        }
         self.errorMessage = ""
         
         // Save to history

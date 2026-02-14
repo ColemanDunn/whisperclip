@@ -68,6 +68,7 @@ final class AudioRecorder: NSObject, ObservableObject {
         isRecording = true
 
         NotificationCenter.default.post(name: .recordingStarted, object: nil)
+        RecordingSoundManager.shared.playStart()
     }
 
     func getLevel() -> Float {
@@ -99,7 +100,12 @@ final class AudioRecorder: NSObject, ObservableObject {
     private func deleteOutputFile() {
         if let url = outputURL {
             GenericHelper.deleteFile(file: url)
-            outputURL = nil
+        }
+    }
+
+    private func cleanupRecordingFileIfNeeded() {
+        if SettingsStore.shared.deleteRecordingFileAfterTranscription {
+            deleteOutputFile()
         }
     }
 
@@ -108,9 +114,10 @@ final class AudioRecorder: NSObject, ObservableObject {
         stop()
         wait()
 
-        deleteOutputFile()
+        cleanupRecordingFileIfNeeded()
         recorder = nil
         isRecording = false
+        outputURL = nil
         resetPending = false
     }
 
@@ -142,6 +149,7 @@ extension AudioRecorder: AVAudioRecorderDelegate {
                 NotificationCenter.default.post(name: .recordingError, object: "Recording failed")
             } else {
                 NotificationCenter.default.post(name: .didFinishRecording, object: outputURL)
+                RecordingSoundManager.shared.playStop()
             }
         }
     }

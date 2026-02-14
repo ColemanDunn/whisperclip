@@ -167,7 +167,7 @@ struct SettingsView: View {
                         Text("Auto Actions")
                             .font(.headline)
                             .foregroundColor(.white)
-                        
+
                         Toggle("Auto-press Enter after paste", isOn: Binding(
                             get: { settings.autoEnter },
                             set: { newValue in
@@ -176,6 +176,28 @@ struct SettingsView: View {
                         ))
                         
                         Text("Automatically press Enter after pasting transcribed text into the active application.")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+
+                        Toggle("Play recording sounds", isOn: Binding(
+                            get: { settings.recordingSoundsEnabled },
+                            set: { newValue in
+                                settings.recordingSoundsEnabled = newValue
+                            }
+                        ))
+                        
+                        Text("Play system sounds when recording starts and stops.")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+
+                        Toggle("Clipboard-only mode", isOn: Binding(
+                            get: { settings.deleteRecordingFileAfterTranscription },
+                            set: { newValue in
+                                settings.deleteRecordingFileAfterTranscription = newValue
+                            }
+                        ))
+                        
+                        Text("Automatically delete the recording file after transcription so only clipboard output remains.")
                             .font(.caption)
                             .foregroundColor(.gray)
                     }

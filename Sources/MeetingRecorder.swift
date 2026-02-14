@@ -122,6 +122,7 @@ class MeetingRecorder: NSObject, ObservableObject {
         
         // Start duration timer
         startDurationTimer()
+        RecordingSoundManager.shared.playStart()
         
         // Update active speakers based on permissions
         if hasSystemAudioPermission {
@@ -163,6 +164,7 @@ class MeetingRecorder: NSObject, ObservableObject {
         }
         
         isRecording = false
+        RecordingSoundManager.shared.playStop()
         
         // Cleanup (safe now — all transcription work is complete)
         cleanup()

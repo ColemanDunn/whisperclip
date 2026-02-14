@@ -91,12 +91,12 @@
 git clone https://github.com/cydanix/whisperclip.git
 cd whisperclip
 
-# Build the app
-./build.sh
+# Build a normal local app
+# Build and install the app so it shows in /Applications (or ~/Applications), then launch via Spotlight/Cmd-Space
+./local_run.sh
 
-# For development
+# Optional: keep build artifacts in build/WhisperClip.app only
 ./local_build.sh Debug
-./local_run.sh Debug
 ```
 
 ## 🔧 Usage
