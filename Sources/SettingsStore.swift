@@ -18,9 +18,11 @@ struct DefaultSettings {
     static let hasCompletedOnboarding = false
     static let language = "auto"
     static let sttEngine = STTEngine.parakeet
+    static let autoPasteToFocusedTextInput = true
     static let autoEnter = false
     static let recordingSoundsEnabled = true
     static let deleteRecordingFileAfterTranscription = true
+    static let saveTranscriptionsToHistory = false
     static let startMinimized = false
     static let displayRecordingOverlay = false
     static let overlayPosition = "topRight"
@@ -54,9 +56,11 @@ class SettingsStore: ObservableObject {
         case hasCompletedOnboarding = "hasCompletedOnboarding"
         case language = "language"
         case sttEngine = "sttEngine"
+        case autoPasteToFocusedTextInput = "autoPasteToFocusedTextInput"
         case autoEnter = "autoEnter"
         case recordingSoundsEnabled = "recordingSoundsEnabled"
         case deleteRecordingFileAfterTranscription = "deleteRecordingFileAfterTranscription"
+        case saveTranscriptionsToHistory = "saveTranscriptionsToHistory"
         case startMinimized = "startMinimized"
         case displayRecordingOverlay = "displayRecordingOverlay"
         case overlayPosition = "overlayPosition"
@@ -98,6 +102,12 @@ class SettingsStore: ObservableObject {
             defaults.set(sttEngine.rawValue, forKey: Keys.sttEngine.rawValue)
         }
     }
+
+    @Published var autoPasteToFocusedTextInput: Bool = DefaultSettings.autoPasteToFocusedTextInput {
+        didSet {
+            defaults.set(autoPasteToFocusedTextInput, forKey: Keys.autoPasteToFocusedTextInput.rawValue)
+        }
+    }
     
     @Published var autoEnter: Bool = DefaultSettings.autoEnter {
         didSet {
@@ -114,6 +124,12 @@ class SettingsStore: ObservableObject {
     @Published var deleteRecordingFileAfterTranscription: Bool = DefaultSettings.deleteRecordingFileAfterTranscription {
         didSet {
             defaults.set(deleteRecordingFileAfterTranscription, forKey: Keys.deleteRecordingFileAfterTranscription.rawValue)
+        }
+    }
+
+    @Published var saveTranscriptionsToHistory: Bool = DefaultSettings.saveTranscriptionsToHistory {
+        didSet {
+            defaults.set(saveTranscriptionsToHistory, forKey: Keys.saveTranscriptionsToHistory.rawValue)
         }
     }
     
@@ -263,9 +279,11 @@ class SettingsStore: ObservableObject {
         } else {
             self.sttEngine = DefaultSettings.sttEngine
         }
+        self.autoPasteToFocusedTextInput = defaults.object(forKey: Keys.autoPasteToFocusedTextInput.rawValue) == nil ? DefaultSettings.autoPasteToFocusedTextInput : defaults.bool(forKey: Keys.autoPasteToFocusedTextInput.rawValue)
         self.autoEnter = defaults.object(forKey: Keys.autoEnter.rawValue) == nil ? DefaultSettings.autoEnter : defaults.bool(forKey: Keys.autoEnter.rawValue)
         self.recordingSoundsEnabled = defaults.object(forKey: Keys.recordingSoundsEnabled.rawValue) == nil ? DefaultSettings.recordingSoundsEnabled : defaults.bool(forKey: Keys.recordingSoundsEnabled.rawValue)
         self.deleteRecordingFileAfterTranscription = defaults.object(forKey: Keys.deleteRecordingFileAfterTranscription.rawValue) == nil ? DefaultSettings.deleteRecordingFileAfterTranscription : defaults.bool(forKey: Keys.deleteRecordingFileAfterTranscription.rawValue)
+        self.saveTranscriptionsToHistory = defaults.object(forKey: Keys.saveTranscriptionsToHistory.rawValue) == nil ? DefaultSettings.saveTranscriptionsToHistory : defaults.bool(forKey: Keys.saveTranscriptionsToHistory.rawValue)
         self.startMinimized = defaults.object(forKey: Keys.startMinimized.rawValue) == nil ? DefaultSettings.startMinimized : defaults.bool(forKey: Keys.startMinimized.rawValue)
         self.displayRecordingOverlay = defaults.object(forKey: Keys.displayRecordingOverlay.rawValue) == nil ? DefaultSettings.displayRecordingOverlay : defaults.bool(forKey: Keys.displayRecordingOverlay.rawValue)
         self.overlayPosition = defaults.string(forKey: Keys.overlayPosition.rawValue) ?? DefaultSettings.overlayPosition
@@ -354,9 +372,11 @@ class SettingsStore: ObservableObject {
         hasCompletedOnboarding = DefaultSettings.hasCompletedOnboarding
         language = DefaultSettings.language
         sttEngine = DefaultSettings.sttEngine
+        autoPasteToFocusedTextInput = DefaultSettings.autoPasteToFocusedTextInput
         autoEnter = DefaultSettings.autoEnter
         recordingSoundsEnabled = DefaultSettings.recordingSoundsEnabled
         deleteRecordingFileAfterTranscription = DefaultSettings.deleteRecordingFileAfterTranscription
+        saveTranscriptionsToHistory = DefaultSettings.saveTranscriptionsToHistory
         startMinimized = DefaultSettings.startMinimized
         displayRecordingOverlay = DefaultSettings.displayRecordingOverlay
         overlayPosition = DefaultSettings.overlayPosition

@@ -33,7 +33,7 @@ enum TranscriptionSource: String, Codable {
 class TranscriptionHistory: ObservableObject {
     static let shared = TranscriptionHistory()
     
-    private let maxItems = 100
+    private let maxItems = 5
     private let storageKey = "transcriptionHistory"
     
     @Published private(set) var items: [TranscriptionItem] = []
@@ -43,6 +43,9 @@ class TranscriptionHistory: ObservableObject {
     }
     
     func add(text: String, source: TranscriptionSource, filename: String? = nil) {
+        guard SettingsStore.shared.saveTranscriptionsToHistory else {
+            return
+        }
         let item = TranscriptionItem(text: text, source: source, filename: filename)
         items.insert(item, at: 0)
         
@@ -68,6 +71,10 @@ class TranscriptionHistory: ObservableObject {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
         do {
             items = try JSONDecoder().decode([TranscriptionItem].self, from: data)
+            if items.count > maxItems {
+                items = Array(items.prefix(maxItems))
+                saveHistory()
+            }
         } catch {
             Logger.log("Failed to load transcription history: \(error)", log: Logger.general, type: .error)
         }

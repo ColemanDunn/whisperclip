@@ -28,6 +28,30 @@ final class AudioRecorder: NSObject, ObservableObject {
         return appDir.appendingPathComponent("recordings")
     }
 
+    private func purgeRecordingDirectoryIfNeeded(_ dir: URL) {
+        guard SettingsStore.shared.deleteRecordingFileAfterTranscription else {
+            return
+        }
+
+        do {
+            let entries = try FileManager.default.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            for fileURL in entries {
+                let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+                guard values.isRegularFile == true else {
+                    continue
+                }
+                _ = cleanupOutputFileIfNeeded(for: fileURL, forceDeleteEnabled: true)
+            }
+        } catch {
+            Logger.log("Failed to purge recording directory: \(error)", log: Logger.audio, type: .debug)
+        }
+    }
+
     func start() throws {
         if isRecording {
             Logger.log("Recording already in progress", log: Logger.audio, type: .debug)
@@ -38,6 +62,7 @@ final class AudioRecorder: NSObject, ObservableObject {
         // 1. Destination URL — Desktop/recording‑<timestamp>.m4a
         let dir = getRecordingDir()
         try GenericHelper.folderCreate(folder: dir)
+        purgeRecordingDirectoryIfNeeded(dir)
         GenericHelper.folderCleanOldFiles(folder: dir, days: 1)
 
         let fileName = "recording-\(GenericHelper.getUnixTimestamp()).m4a"
@@ -97,16 +122,31 @@ final class AudioRecorder: NSObject, ObservableObject {
         Logger.log("Recording stopped: \(isRecording)", log: Logger.audio)
     }
 
-    private func deleteOutputFile() {
-        if let url = outputURL {
-            GenericHelper.deleteFile(file: url)
+    func cleanupOutputFileIfNeeded(for url: URL, forceDeleteEnabled: Bool? = nil) -> Bool {
+        let shouldDelete = forceDeleteEnabled ?? SettingsStore.shared.deleteRecordingFileAfterTranscription
+        guard shouldDelete else {
+            return false
         }
-    }
+        if !GenericHelper.fileExists(file: url) {
+            return true
+        }
 
-    private func cleanupRecordingFileIfNeeded() {
-        if SettingsStore.shared.deleteRecordingFileAfterTranscription {
-            deleteOutputFile()
+        // Retry because AVAudioRecorder/file IO teardown can lag briefly.
+        for attempt in 0..<6 {
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                Logger.log("Recording cleanup attempt \(attempt + 1) failed: \(error)", log: Logger.audio, type: .debug)
+            }
+
+            if !GenericHelper.fileExists(file: url) {
+                return true
+            }
+            usleep(100_000)
         }
+
+        Logger.log("Recording cleanup failed after retries: \(url.path)", log: Logger.audio, type: .error)
+        return !GenericHelper.fileExists(file: url)
     }
 
     func reset() {
@@ -114,10 +154,14 @@ final class AudioRecorder: NSObject, ObservableObject {
         stop()
         wait()
 
-        cleanupRecordingFileIfNeeded()
+        // Drop recorder before deleting to avoid file-handle timing issues.
+        let urlToCleanup = outputURL
         recorder = nil
         isRecording = false
         outputURL = nil
+        if let urlToCleanup {
+            _ = cleanupOutputFileIfNeeded(for: urlToCleanup)
+        }
         resetPending = false
     }
 

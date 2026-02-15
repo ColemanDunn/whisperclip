@@ -151,8 +151,11 @@ struct ContentView: View {
                     .padding(.bottom, 16)
                 }
             }
-            .frame(minWidth: 200, maxWidth: 220)
-            .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
+            .frame(minWidth: 220, maxWidth: 220, 
+//             maxHeight: .infinity,
+ alignment: .topLeading)
+            .background(Color(NSColor.windowBackgroundColor))
+            .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 220)
         } detail: {
             switch selectedItem {
             case .microphone:
@@ -201,20 +204,18 @@ struct SidebarButton: View {
                 
                 Spacer()
                 
-                if isSelected {
                     Circle()
-                        .fill(item.color)
+                        .fill(isSelected ? item.color : Color.clear)
                         .frame(width: 6, height: 6)
                 }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(isSelected ? Color.white.opacity(0.1) : (isHovered ? Color.white.opacity(0.05) : Color.clear))
             )
         }
-        .frame(minHeight: 52)
+        .frame(minHeight: 58)
         .buttonStyle(.plain)
     }
 }

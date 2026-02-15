@@ -168,12 +168,24 @@ struct SettingsView: View {
                             .font(.headline)
                             .foregroundColor(.white)
 
+                        Toggle("Auto-paste into focused text box", isOn: Binding(
+                            get: { settings.autoPasteToFocusedTextInput },
+                            set: { newValue in
+                                settings.autoPasteToFocusedTextInput = newValue
+                            }
+                        ))
+
+                        Text("When enabled, transcribed text is pasted into the currently focused input field (if one is available).")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+
                         Toggle("Auto-press Enter after paste", isOn: Binding(
                             get: { settings.autoEnter },
                             set: { newValue in
                                 settings.autoEnter = newValue
                             }
                         ))
+                        .disabled(!settings.autoPasteToFocusedTextInput)
                         
                         Text("Automatically press Enter after pasting transcribed text into the active application.")
                             .font(.caption)
@@ -197,7 +209,18 @@ struct SettingsView: View {
                             }
                         ))
                         
-                        Text("Automatically delete the recording file after transcription so only clipboard output remains.")
+                        Text("Automatically delete temporary recording audio files after transcription.")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+
+                        Toggle("Save transcriptions to History", isOn: Binding(
+                            get: { settings.saveTranscriptionsToHistory },
+                            set: { newValue in
+                                settings.saveTranscriptionsToHistory = newValue
+                            }
+                        ))
+
+                        Text("When disabled, new transcriptions are not stored in History.")
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
