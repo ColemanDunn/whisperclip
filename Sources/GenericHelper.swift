@@ -4,6 +4,9 @@ import AppKit
 import ApplicationServices
 
 enum GenericHelper {
+    #if os(macOS)
+    private static var hasPromptedForAccessibilityFromAutoPaste = false
+    #endif
 
     static func getAppSupportDirectory() -> URL {
         let fileManager = FileManager.default
@@ -415,16 +418,74 @@ enum GenericHelper {
         #endif
     }
 
-    static func copyToClipboard(text: String) {
+    static func copyToClipboard(text: String) -> Bool {
         #if os(macOS)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        if Thread.isMainThread {
+            return copyToClipboardOnMainThread(text: text)
+        }
 
+        var wrote = false
+        DispatchQueue.main.sync {
+            wrote = copyToClipboardOnMainThread(text: text)
+        }
+        return wrote
         #else
         UIPasteboard.general.string = text
+        return true
         #endif
     }
+
+    #if os(macOS)
+    private static func copyToClipboardOnMainThread(text: String) -> Bool {
+        let pasteboard = NSPasteboard.general
+
+        for attempt in 0..<3 {
+            pasteboard.clearContents()
+            if pasteboard.setString(text, forType: .string) {
+                return true
+            }
+            Logger.log("Clipboard write attempt \(attempt + 1) failed", log: Logger.general, type: .debug)
+            usleep(20_000)
+        }
+
+        Logger.log("Failed to copy text to clipboard", log: Logger.general, type: .error)
+        return false
+    }
+
+    @discardableResult
+    static func activateApplication(processIdentifier: pid_t?, bundleIdentifier: String?) -> Bool {
+        guard let target = resolveApplication(processIdentifier: processIdentifier, bundleIdentifier: bundleIdentifier) else {
+            return false
+        }
+
+        guard target.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return false
+        }
+
+        let activated = target.activate(options: [.activateAllWindows])
+        if activated {
+            usleep(120_000)
+        }
+        return activated
+    }
+
+    private static func resolveApplication(processIdentifier: pid_t?, bundleIdentifier: String?) -> NSRunningApplication? {
+        if let processIdentifier,
+           let appByPID = NSRunningApplication(processIdentifier: processIdentifier),
+           !appByPID.isTerminated {
+            return appByPID
+        }
+
+        if let bundleIdentifier {
+            let byBundle = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            if let app = byBundle.first(where: { !$0.isTerminated }) {
+                return app
+            }
+        }
+
+        return nil
+    }
+    #endif
 
     static func isWhisperClipActive() -> Bool {
         if let frontApp = NSWorkspace.shared.frontmostApplication {
@@ -444,11 +505,22 @@ enum GenericHelper {
             Logger.log("Auto pasting: \(text)", log: Logger.general)
         }
 
-        // Do not paste if WhisperClip is the active app
-        if isWhisperClipActive() {
+        // If writing the clipboard fails, we cannot safely continue.
+        if !copyToClipboard(text: text) {
             if GenericHelper.logSensitiveData() {
-                Logger.log("Paste skipped: WhisperClip is frontmost app", log: Logger.general)
+                Logger.log("Paste skipped: failed to update clipboard", log: Logger.general)
             }
+            return false
+        }
+
+        if isWhisperClipActive() {
+            Logger.log("Auto paste skipped: WhisperClip is frontmost app", log: Logger.general, type: .debug)
+            return false
+        }
+
+        guard SecurityChecker.shared.checkAccessibilityPermission().isGranted else {
+            Logger.log("Auto paste skipped: Accessibility permission not granted", log: Logger.general, type: .error)
+            requestAccessibilityPermissionForAutoPasteIfNeeded()
             return false
         }
 
@@ -459,40 +531,44 @@ enum GenericHelper {
             return false
         }
 
-        // ⌘V in whichever app is active
-        let script = #"""
-        tell application "System Events"
-            key code 9 using {command down}
-        end tell
-        """#
-        var err: NSDictionary?
-        NSAppleScript(source: script)?.executeAndReturnError(&err)
-
-        if let err {
-            Logger.log("AppleScript error: \(err.description)", log: Logger.general, type: .error)
-            return false
-        } else {
-            if GenericHelper.logSensitiveData() {
-                Logger.log("Auto pasted: \(text)", log: Logger.general)
-            }
+        if insertTextIntoFocusedInput(text: text) {
+            Logger.log("Auto inserted text via accessibility API", log: Logger.general, type: .debug)
             return true
         }
+
+        // Fallback to simulated Cmd+V in whichever app is active.
+        let pasted = simulateKeyPress(keyCode: 9, flags: .maskCommand)
+        if !pasted {
+            Logger.log("Failed to simulate Cmd+V paste event", log: Logger.general, type: .error)
+            return false
+        }
+
+        if GenericHelper.logSensitiveData() {
+            Logger.log("Auto pasted via Cmd+V event", log: Logger.general)
+        }
+        return true
+    }
+
+    private static func requestAccessibilityPermissionForAutoPasteIfNeeded() {
+        #if os(macOS)
+        guard !hasPromptedForAccessibilityFromAutoPaste else {
+            return
+        }
+        hasPromptedForAccessibilityFromAutoPaste = true
+        DispatchQueue.main.async {
+            SecurityChecker.shared.requestAccessibilityPermission()
+        }
+        #endif
     }
 
     private static func shouldAutoPasteToFocusedInput() -> Bool {
-        guard SecurityChecker.shared.checkAccessibilityPermission().isGranted else {
-            Logger.log("Accessibility not trusted; skipping focused-input check and falling back to default paste behavior", log: Logger.general)
+        guard let focusedElement = getFocusedUIElement() else {
+            Logger.log("No focused UI element detected; allowing fallback paste", log: Logger.general, type: .debug)
             return true
         }
-        
-        guard let focusedElement = getFocusedUIElement() else {
-            Logger.log("No focused UI element detected", log: Logger.general, type: .error)
-            return false
-        }
-        
-        guard let role = getAXAttribute(focusedElement, kAXRoleAttribute as CFString) as? String else {
-            Logger.log("Focused UI element has no role", log: Logger.general, type: .error)
-            return false
+
+        if let editable = getAXAttribute(focusedElement, "AXEditable" as CFString) as? Bool, editable {
+            return true
         }
 
         let editableRoles: Set<String> = [
@@ -501,20 +577,28 @@ enum GenericHelper {
             "AXComboBox",
             "AXSearchField",
             "AXSecureTextField",
-            "AXTextView"
+            "AXTextView",
+            "AXWebArea"
         ]
-        
-        if editableRoles.contains(role) {
-            return true
-        }
-        
-        if let value = getAXAttribute(focusedElement, kAXValueAttribute as CFString) {
-            if let valueString = value as? String, !valueString.isEmpty {
+
+        if let role = getAXAttribute(focusedElement, kAXRoleAttribute as CFString) as? String {
+            if editableRoles.contains(role) {
                 return true
             }
         }
-        
-        return false
+
+        if isAXAttributeSettable(focusedElement, kAXSelectedTextAttribute as CFString) {
+            return true
+        }
+        if isAXAttributeSettable(focusedElement, kAXValueAttribute as CFString) {
+            return true
+        }
+        if getAXAttribute(focusedElement, kAXSelectedTextRangeAttribute as CFString) != nil {
+            return true
+        }
+
+        // Prefer trying paste over dropping output due false negatives in role detection.
+        return true
     }
     
     private static func getFocusedUIElement() -> AXUIElement? {
@@ -540,29 +624,355 @@ enum GenericHelper {
         return value as AnyObject
     }
 
+    private static func isAXAttributeSettable(_ element: AXUIElement, _ attribute: CFString) -> Bool {
+        var settable = DarwinBoolean(false)
+        let status = AXUIElementIsAttributeSettable(element, attribute, &settable)
+        return status == .success && settable.boolValue
+    }
+
+    private static func setAXStringAttribute(_ element: AXUIElement, _ attribute: CFString, _ value: String) -> Bool {
+        return AXUIElementSetAttributeValue(element, attribute, value as CFTypeRef) == .success
+    }
+
+    private static func axStringValue(_ value: AnyObject?) -> String? {
+        if let str = value as? String {
+            return str
+        }
+        if let attributed = value as? NSAttributedString {
+            return attributed.string
+        }
+        return nil
+    }
+
+    private static func selectedTextRange(for element: AXUIElement) -> CFRange? {
+        guard let raw = getAXAttribute(element, kAXSelectedTextRangeAttribute as CFString) else {
+            return nil
+        }
+        guard CFGetTypeID(raw) == AXValueGetTypeID() else {
+            return nil
+        }
+        let axValue = raw as! AXValue
+        guard AXValueGetType(axValue) == .cfRange else {
+            return nil
+        }
+        var range = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(axValue, .cfRange, &range) else {
+            return nil
+        }
+        return range
+    }
+
+    private static func setSelectedTextRange(_ range: CFRange, for element: AXUIElement) -> Bool {
+        var mutableRange = range
+        guard let axRange = AXValueCreate(.cfRange, &mutableRange) else {
+            return false
+        }
+        return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange) == .success
+    }
+
+    static func normalizedAXValueForInsertion(existingValue: String, placeholderValue: String?) -> String {
+        guard let placeholderValue else {
+            return existingValue
+        }
+
+        let trimmedPlaceholder = placeholderValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPlaceholder.isEmpty else {
+            return existingValue
+        }
+
+        let placeholderCompareOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        let trimmedExisting = existingValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedExisting.compare(trimmedPlaceholder, options: placeholderCompareOptions) == .orderedSame {
+            return ""
+        }
+
+        var normalized = existingValue
+        var didStripPlaceholder = false
+
+        if let prefixRange = normalized.range(of: trimmedPlaceholder, options: placeholderCompareOptions.union(.anchored)) {
+            let trailing = normalized[prefixRange.upperBound...]
+            let hasBoundaryAfterPlaceholder = trailing.isEmpty || trailing.first.map(isWhitespaceOrNewlineCharacter) == true
+            if hasBoundaryAfterPlaceholder {
+                normalized.removeSubrange(normalized.startIndex..<prefixRange.upperBound)
+                didStripPlaceholder = true
+            }
+        }
+
+        if let suffixRange = normalized.range(of: trimmedPlaceholder, options: placeholderCompareOptions.union(.backwards)) {
+            let leading = normalized[..<suffixRange.lowerBound]
+            let trailing = normalized[suffixRange.upperBound...]
+            let hasBoundaryBeforePlaceholder = leading.isEmpty || leading.last.map(isWhitespaceOrNewlineCharacter) == true
+            let hasOnlyWhitespaceAfterPlaceholder = trailing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if hasBoundaryBeforePlaceholder && hasOnlyWhitespaceAfterPlaceholder {
+                normalized.removeSubrange(suffixRange.lowerBound..<normalized.endIndex)
+                didStripPlaceholder = true
+            }
+        }
+
+        if didStripPlaceholder {
+            let newlineTrimmed = normalized.trimmingCharacters(in: .newlines)
+            if newlineTrimmed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return ""
+            }
+            return newlineTrimmed
+        }
+
+        return normalized
+    }
+
+    static func normalizedAXValueForKnownAppPlaceholders(existingValue: String, frontmostBundleIdentifier: String?) -> String {
+        let placeholderTokens = knownPlaceholderTokens(frontmostBundleIdentifier: frontmostBundleIdentifier)
+        guard !placeholderTokens.isEmpty else {
+            return existingValue
+        }
+
+        var normalized = existingValue
+        for placeholderToken in placeholderTokens {
+            normalized = normalizedAXValueForInsertion(existingValue: normalized, placeholderValue: placeholderToken)
+            normalized = stripStandalonePlaceholderToken(placeholderToken, from: normalized)
+        }
+
+        let newlineTrimmed = normalized.trimmingCharacters(in: .newlines)
+        if newlineTrimmed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ""
+        }
+        return newlineTrimmed
+    }
+
+    static func shouldDiscardKnownPlaceholderResidue(
+        existingValue: String,
+        selection: CFRange,
+        frontmostBundleIdentifier: String?
+    ) -> Bool {
+        let placeholderTokens = knownPlaceholderTokens(frontmostBundleIdentifier: frontmostBundleIdentifier)
+        guard !placeholderTokens.isEmpty else {
+            return false
+        }
+        guard selection.location == 0 else {
+            return false
+        }
+        guard existingValue.count <= 96 else {
+            return false
+        }
+
+        let lowered = existingValue.lowercased()
+        return placeholderTokens.contains(where: { lowered.contains($0.lowercased()) })
+    }
+
+    private static func knownPlaceholderTokens(frontmostBundleIdentifier: String?) -> [String] {
+        guard let bundle = frontmostBundleIdentifier?.lowercased() else {
+            return []
+        }
+
+        if bundle.contains("codex") {
+            return ["Ask for follow-up"]
+        }
+
+        return []
+    }
+
+    private static func stripStandalonePlaceholderToken(_ token: String, from text: String) -> String {
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedToken.isEmpty else {
+            return text
+        }
+        guard let regex = try? NSRegularExpression(
+            pattern: "(?i)(^|\\s+)\(NSRegularExpression.escapedPattern(for: trimmedToken))(?=\\s+|$)"
+        ) else {
+            return text
+        }
+
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        var stripped = regex.stringByReplacingMatches(in: text, range: fullRange, withTemplate: "$1")
+
+        // Keep formatting stable after token removal.
+        while stripped.contains("  ") {
+            stripped = stripped.replacingOccurrences(of: "  ", with: " ")
+        }
+        stripped = stripped.replacingOccurrences(of: " \n", with: "\n")
+        stripped = stripped.replacingOccurrences(of: "\n ", with: "\n")
+
+        return stripped
+    }
+
+    private static func isWhitespaceOrNewlineCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
+    }
+
+    private static func debugPreview(_ value: String?, maxLength: Int = 160) -> String {
+        guard let value else {
+            return "<nil>"
+        }
+
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: " ", with: "␠")
+
+        if escaped.count > maxLength {
+            let endIndex = escaped.index(escaped.startIndex, offsetBy: maxLength)
+            return String(escaped[..<endIndex]) + "…"
+        }
+
+        return escaped
+    }
+
+    static func shouldUseAXSelectedTextInsertion(frontmostBundleIdentifier: String?) -> Bool {
+        guard let bundle = frontmostBundleIdentifier?.lowercased() else {
+            return true
+        }
+        // Codex reports placeholder-adjacent AX values more reliably via AXValue replacement.
+        if bundle.contains("codex") {
+            return false
+        }
+        return true
+    }
+
+    private static func insertTextIntoFocusedInput(text: String) -> Bool {
+        guard SecurityChecker.shared.checkAccessibilityPermission().isGranted else {
+            return false
+        }
+        guard let focusedElement = getFocusedUIElement() else {
+            return false
+        }
+
+        let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        Logger.log("AX insert path for bundle: \(frontBundle ?? "unknown")", log: Logger.general, type: .debug)
+
+        let shouldTrySelectedText = shouldUseAXSelectedTextInsertion(frontmostBundleIdentifier: frontBundle)
+
+        // Prefer direct selected-text insertion when available.
+        // This lets the target app control caret/placeholder semantics.
+        if shouldTrySelectedText,
+           isAXAttributeSettable(focusedElement, kAXSelectedTextAttribute as CFString),
+           setAXStringAttribute(focusedElement, kAXSelectedTextAttribute as CFString, text) {
+            Logger.log("AX selected-text insertion succeeded", log: Logger.general, type: .debug)
+            return true
+        }
+
+        if !shouldTrySelectedText {
+            Logger.log("Skipping AX selected-text insertion for this app", log: Logger.general, type: .debug)
+        }
+
+        // Prefer replacing the selected range to preserve existing content.
+        if let existing = axStringValue(getAXAttribute(focusedElement, kAXValueAttribute as CFString)),
+           let selection = selectedTextRange(for: focusedElement),
+           isAXAttributeSettable(focusedElement, kAXValueAttribute as CFString) {
+            let placeholder = axStringValue(getAXAttribute(focusedElement, "AXPlaceholderValue" as CFString))
+            Logger.log(
+                "AX raw state selection=(\(selection.location),\(selection.length)) existingLen=\(existing.count) placeholderLen=\(placeholder?.count ?? 0) existing=\"\(debugPreview(existing))\" placeholder=\"\(debugPreview(placeholder))\"",
+                log: Logger.general,
+                type: .debug
+            )
+
+            let normalizedFromPlaceholder = normalizedAXValueForInsertion(existingValue: existing, placeholderValue: placeholder)
+            var effectiveExisting = normalizedAXValueForKnownAppPlaceholders(
+                existingValue: normalizedFromPlaceholder,
+                frontmostBundleIdentifier: frontBundle
+            )
+
+            Logger.log(
+                "AX normalized state fromPlaceholderLen=\(normalizedFromPlaceholder.count) effectiveLen=\(effectiveExisting.count) fromPlaceholder=\"\(debugPreview(normalizedFromPlaceholder))\" effective=\"\(debugPreview(effectiveExisting))\"",
+                log: Logger.general,
+                type: .debug
+            )
+
+            if shouldDiscardKnownPlaceholderResidue(
+                existingValue: existing,
+                selection: selection,
+                frontmostBundleIdentifier: frontBundle
+            ) {
+                Logger.log(
+                    "Discarding known placeholder residue for bundle \(frontBundle ?? "unknown") at selection start",
+                    log: Logger.general,
+                    type: .debug
+                )
+                effectiveExisting = ""
+            }
+
+            if existing.count != effectiveExisting.count {
+                Logger.log(
+                    "Normalized AX value length from \(existing.count) to \(effectiveExisting.count)",
+                    log: Logger.general,
+                    type: .debug
+                )
+            }
+
+            if effectiveExisting.isEmpty, !existing.isEmpty, GenericHelper.logSensitiveData() {
+                Logger.log("Treating AX value as placeholder-only content", log: Logger.general, type: .debug)
+            }
+
+            let safeLocation = max(0, min(selection.location, effectiveExisting.count))
+            let safeLength = max(0, selection.length)
+            let safeEnd = max(safeLocation, min(safeLocation + safeLength, effectiveExisting.count))
+
+            Logger.log(
+                "AX safe range location=\(safeLocation) length=\(safeLength) end=\(safeEnd)",
+                log: Logger.general,
+                type: .debug
+            )
+
+            let startIndex = effectiveExisting.index(effectiveExisting.startIndex, offsetBy: safeLocation)
+            let endIndex = effectiveExisting.index(effectiveExisting.startIndex, offsetBy: safeEnd)
+            let updated = String(effectiveExisting[..<startIndex]) + text + String(effectiveExisting[endIndex...])
+
+            Logger.log(
+                "AX updated value length=\(updated.count) updatedPreview=\"\(debugPreview(updated))\"",
+                log: Logger.general,
+                type: .debug
+            )
+
+            if setAXStringAttribute(focusedElement, kAXValueAttribute as CFString, updated) {
+                let caretLocation = safeLocation + text.count
+                let _ = setSelectedTextRange(CFRange(location: caretLocation, length: 0), for: focusedElement)
+                Logger.log("AX value replacement succeeded", log: Logger.general, type: .debug)
+                return true
+            }
+        }
+
+        Logger.log("AX insertion did not succeed", log: Logger.general, type: .debug)
+
+        return false
+    }
+
+    private static func simulateKeyPress(keyCode: CGKeyCode, flags: CGEventFlags = []) -> Bool {
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return false
+        }
+
+        keyDown.flags = flags
+        keyUp.flags = flags
+        keyDown.post(tap: .cghidEventTap)
+        usleep(10_000)
+        keyUp.post(tap: .cghidEventTap)
+        return true
+    }
+
     static func sendEnter() -> Bool {
         if GenericHelper.logSensitiveData() {
             Logger.log("Auto sending Enter", log: Logger.general)
         }
 
-        // ⌘Enter in whichever app is active
-        let script = #"""
-        tell application "System Events"
-            key code 36
-        end tell
-        """#
-        var err: NSDictionary?
-        NSAppleScript(source: script)?.executeAndReturnError(&err)
-
-        if let err {
-            Logger.log("AppleScript error: \(err.description)", log: Logger.general, type: .error)
+        guard SecurityChecker.shared.checkAccessibilityPermission().isGranted else {
+            Logger.log("Auto-enter skipped: Accessibility permission not granted", log: Logger.general, type: .error)
+            requestAccessibilityPermissionForAutoPasteIfNeeded()
             return false
-        } else {
-            if GenericHelper.logSensitiveData() {
-                Logger.log("Auto sent Enter", log: Logger.general)
-            }
-            return true
         }
+
+        let sent = simulateKeyPress(keyCode: 36)
+        if !sent {
+            Logger.log("Failed to simulate Enter key event", log: Logger.general, type: .error)
+            return false
+        }
+
+        if GenericHelper.logSensitiveData() {
+            Logger.log("Auto sent Enter", log: Logger.general)
+        }
+        return true
     }
 
     static func waitCondition(condition: () -> Bool, timeout: TimeInterval) -> Bool {

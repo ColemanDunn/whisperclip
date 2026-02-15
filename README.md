@@ -74,8 +74,8 @@
 - **macOS 14.0** or later
 - **20GB** free disk space (for AI models)
 - **Microphone access** permission
-- **Accessibility permissions** (optional; improves focused-input detection)
-- **Apple Events permissions** (for clipboard operations)
+- **Accessibility permissions** (required for auto-paste/auto-enter)
+- **Apple Events permissions** (optional; legacy automation compatibility)
 
 ## 🚀 Installation
 
@@ -98,6 +98,8 @@ cd whisperclip
 # Optional: keep build artifacts in build/WhisperClip.app only
 ./local_build.sh Debug
 ```
+
+Note: macOS permission grants are tied to the specific app identity/path. For reliable Accessibility detection, launch the installed app bundle (`/Applications/WhisperClip.app` or `~/Applications/WhisperClip.app`) instead of running the raw binary from build artifacts.
 
 ## 🔧 Usage
 

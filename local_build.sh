@@ -10,6 +10,7 @@ APP_ICON="WhisperClip.icns"
 APP_BUNDLE_IDENTIFIER="com.whisperclip"
 CONFIG_PRODUCT_PATH="$BUILD_DIR/Build/Products/$CONFIG"
 BINARY_PATH="$CONFIG_PRODUCT_PATH/$APP_NAME"
+ENTITLEMENTS_PATH="WhisperClip.entitlements"
 
 xcodebuild \
   -scheme "$APP_NAME" \
@@ -68,6 +69,16 @@ cat > "$APP_BUNDLE_PATH/Contents/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
+
+# Sign the local app bundle so TCC (Accessibility/Microphone) can track it reliably.
+codesign --force \
+  --deep \
+  --sign - \
+  --identifier "$APP_BUNDLE_IDENTIFIER" \
+  --entitlements "$ENTITLEMENTS_PATH" \
+  "$APP_BUNDLE_PATH"
+
+codesign --verify --verbose=2 "$APP_BUNDLE_PATH"
 
 echo "✅ Built binary: $BINARY_PATH"
 echo "✅ Built app bundle: $APP_BUNDLE_PATH"

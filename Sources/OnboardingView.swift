@@ -327,8 +327,9 @@ struct OnboardingView: View {
         OnboardingStep(
             title: "Accessibility Permission",
             description: """
-            Optional for:
-            • Better focused-input detection
+            Required for:
+            • Auto-paste into focused apps
+            • Auto-press Enter
 
             Click "Request Access" to prompt for accessibility permission.
             """,
@@ -356,23 +357,6 @@ struct OnboardingView: View {
             },
             skipCondition: {
                 SecurityChecker.shared.checkMicrophonePermission().isGranted
-            }
-        ),
-        OnboardingStep(
-            title: "Apple Events Permission",
-            description: """
-            Required for:
-            • Auto-pasting text
-
-            Click "Request Access" to prompt for Apple Events permission.
-            """,
-            imageName: "keyboard",
-            buttonText: "Request Access",
-            action: { progress in
-                SecurityChecker.shared.requestAppleEventsPermission()
-            },
-            skipCondition: {
-                SecurityChecker.shared.checkAppleEventsPermission().isGranted
             }
         ),
         OnboardingStep(

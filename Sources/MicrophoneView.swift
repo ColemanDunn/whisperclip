@@ -14,6 +14,8 @@ struct MicrophoneView: View {
     @State private var overlayShown = false
     @State private var showDonationDialog = false
     @State private var pulseAnimation = false
+    @State private var pasteTargetProcessIdentifier: pid_t? = nil
+    @State private var pasteTargetBundleIdentifier: String? = nil
 
     @StateObject private var hotkeyManager = HotkeyManager.shared
     @StateObject private var settings = SettingsStore.shared
@@ -305,6 +307,7 @@ struct MicrophoneView: View {
             Logger.log("Already processing, skipping", log: Logger.audio)
             return
         }
+        capturePasteTargetApplication()
         Logger.log("Starting recording", log: Logger.audio)
         resetState()
         do {
@@ -327,10 +330,24 @@ struct MicrophoneView: View {
     }
 
     private func stopRecording() {
+        capturePasteTargetApplication()
         Logger.log("Stopping recording", log: Logger.audio)
         recordingTimer?.invalidate()
         recordingTimer = nil
         audio.stop()
+    }
+
+    private func capturePasteTargetApplication() {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            return
+        }
+
+        if frontApp.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            return
+        }
+
+        pasteTargetProcessIdentifier = frontApp.processIdentifier
+        pasteTargetBundleIdentifier = frontApp.bundleIdentifier
     }
 
     private func transcribeAudio(url: URL, source: TranscriptionSource, filename: String? = nil) {
@@ -347,6 +364,7 @@ struct MicrophoneView: View {
                 let text = try await voiceToTextModel.process(filepath: url.path)
 
                 audio.reset()
+                _ = audio.cleanupOutputFileIfNeeded(for: url)
                 if GenericHelper.logSensitiveData() {
                     Logger.log("Transcribed text: \(text)", log: Logger.audio)
                 }
@@ -375,13 +393,10 @@ struct MicrophoneView: View {
                     enhancedText = text
                 }
 
-                DispatchQueue.main.async {
-                    Task {
-                        await self.processText(text: enhancedText, source: source, filename: filename)
-                    }
-                }
+                await self.processText(text: enhancedText, source: source, filename: filename)
             } catch {
                 audio.reset()
+                _ = audio.cleanupOutputFileIfNeeded(for: url)
                 DispatchQueue.main.async {
                     Logger.log("Processing error: \(error)", log: Logger.audio, type: .error)
                     self.isProcessing = false
@@ -402,22 +417,38 @@ struct MicrophoneView: View {
         audio.reset()
     }
 
+    @MainActor
     private func processText(text: String, source: TranscriptionSource, filename: String? = nil) async {
         defer {
             self.isTranscribing = false
             self.isProcessing = false
+            self.pasteTargetProcessIdentifier = nil
+            self.pasteTargetBundleIdentifier = nil
         }
 
-        GenericHelper.copyToClipboard(text: text)
-        let pasted = GenericHelper.paste(text: text)
-        
-        if pasted && settings.autoEnter {
-            _ = GenericHelper.sendEnter()
+        let clipboardCopied = GenericHelper.copyToClipboard(text: text)
+        var pasted = false
+
+        if settings.autoPasteToFocusedTextInput {
+            _ = GenericHelper.activateApplication(
+                processIdentifier: pasteTargetProcessIdentifier,
+                bundleIdentifier: pasteTargetBundleIdentifier
+            )
+            pasted = GenericHelper.paste(text: text)
+            if pasted && settings.autoEnter {
+                _ = GenericHelper.sendEnter()
+            }
         }
 
         self.resultText = text
-        if pasted {
+        if !clipboardCopied {
+            self.statusMessage = "⚠️ Failed to copy to clipboard"
+        } else if !settings.autoPasteToFocusedTextInput {
+            self.statusMessage = "✓ Copied to clipboard"
+        } else if pasted {
             self.statusMessage = "✓ Copied to clipboard ✓ Auto pasted\(settings.autoEnter ? " ✓ Auto enter" : "")"
+        } else if !SecurityChecker.shared.checkAccessibilityPermission().isGranted {
+            self.statusMessage = "✓ Copied to clipboard (enable Accessibility for auto paste)"
         } else {
             self.statusMessage = "✓ Copied to clipboard (no active text input detected)"
         }

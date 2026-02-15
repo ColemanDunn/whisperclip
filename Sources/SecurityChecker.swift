@@ -52,7 +52,7 @@ class SecurityChecker: ObservableObject {
         // Global hotkeys are registered via Carbon and do not require Accessibility/Input Monitoring.
         var statuses: [SecurityPermission: PermissionStatus] = [:]
         statuses[.microphone] = checkMicrophonePermission()
-        statuses[.appleEvents] = checkAppleEventsPermission()
+        statuses[.accessibility] = checkAccessibilityPermission()
         return statuses
     }
     
@@ -61,7 +61,9 @@ class SecurityChecker: ObservableObject {
             kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false
         ] as CFDictionary
         
-        let isTrusted = AXIsProcessTrustedWithOptions(options)
+        let trustedWithOptions = AXIsProcessTrustedWithOptions(options)
+        let trustedLegacy = AXIsProcessTrusted()
+        let isTrusted = trustedWithOptions || trustedLegacy
         
         return PermissionStatus(
             isGranted: isTrusted,
@@ -95,54 +97,16 @@ class SecurityChecker: ObservableObject {
     }
     
     func checkAppleEventsPermission() -> PermissionStatus {
-        // Try to control System Events with a simple command
-        let script = """
-        tell application "System Events"
-            set frontProcess to first process
-            return name of frontProcess
-        end tell
-        """
-
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: script) {
-            let _ = scriptObject.executeAndReturnError(&error)
-            if error == nil {
-                Logger.log("Apple Events permission granted", log: Logger.general)
-                return PermissionStatus(
-                    isGranted: true,
-                    message: "Apple Events permission granted"
-                )
-            }
-
-            // Check for permission denied error
-            if let errorNumber = error?[NSAppleScript.errorNumber] as? NSNumber,
-               errorNumber.intValue == -1743 {
-                Logger.log("Apple Events permission denied", log: Logger.general)
-                return PermissionStatus(
-                    isGranted: false,
-                    message: "Apple Events permission required for clipboard operations"
-                )
-            }
-
-            Logger.log("Apple Events check error: \(error ?? [:])", log: Logger.general, type: .error)
-        }
-
         return PermissionStatus(
-            isGranted: false,
-            message: "Apple Events permission required for clipboard operations"
+            isGranted: true,
+            message: "Apple Events permission optional (not required for core features)"
         )
     }
 
     func checkInputMonitoringPermission() -> PermissionStatus {
-        if canCreateInputMonitoringTap() {
-            return PermissionStatus(
-                isGranted: true,
-                message: "Input monitoring permission granted"
-            )
-        }
         return PermissionStatus(
-            isGranted: false,
-            message: "Input monitoring permission required for global hotkeys"
+            isGranted: true,
+            message: "Input Monitoring permission optional (not required for Carbon hotkeys)"
         )
     }
 
